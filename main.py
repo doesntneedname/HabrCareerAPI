@@ -104,7 +104,7 @@ def get_vacancies():
     headers = {'Authorization': f"Bearer {access_token}", 'User-Agent': 'Chrome/123.0.0.0'}
     
     current_applies, new_applies = [], []
-    vacancies_ids = ['1000120145', '1000133038']
+    vacancies_ids = ['your vacancy id', 'your vacancy id', 'your vacancy id', 'your vacancy id'] #if you have only 1 vacancy, add vacancies_ids = ['your vacancy id'], if more, then add more.
 
     for vacancy_id in vacancies_ids:
         try:
