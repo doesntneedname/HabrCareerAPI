@@ -3,27 +3,28 @@ from flask_apscheduler import APScheduler
 import requests
 import urllib.parse
 from datetime import datetime
+import math
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'your secret key'
 
-scheduler = APScheduler()
+scheduler = APScheduler() 
 scheduler.init_app(app)
 scheduler.start()
 
-CLIENT_ID = 'your client id'
-CLIENT_SECRET = 'your client secret'
-REDIRECT_URI = 'http://localhost:5000/callback'
+CLIENT_ID = 'YOUR CLIENT ID' # Ваш клинент ID (находится в настройках созданного вами приложения на Хабр https://career.habr.com/profile/applications)
+CLIENT_SECRET = 'YOUR CLIENT SECRET' # Ваш коиент секрет (находится там же)
+REDIRECT_URI = 'http://localhost:5000/callback'# Ссылка возрата (нужно задать в настройках приложения на Хабр, в разделе "редактировать")
 
-AUTH_URL = 'https://career.habr.com/integrations/oauth/authorize'
-TOKEN_URL = 'https://career.habr.com/integrations/oauth/token'
-API_BASE_URL = 'https://career.habr.com/api/'
+AUTH_URL = 'https://career.habr.com/integrations/oauth/authorize' 
+TOKEN_URL = 'https://career.habr.com/integrations/oauth/token' 
+API_BASE_URL = 'https://career.habr.com/api/' 
 
-WEBHOOK_URL = 'your webhook url'
+WEBHOOK_URL = 'YOUR WEBHOOK URL' # Ссылка куда вам нужен вебхук
 
-CACHE_FILE_PATH = '.venv/cached_applies.json'
+CACHE_FILE_PATH = '.venv/cached_applies.json' # Путь к файлу с кешем
+TOKEN_FILE_PATH = '.venv/access_token.txt' # Путь к файлу с токеном сессии
 
-def load_cache():
+def load_cache(): # Загрузка кеша, берет кеш из файла и загружает к нам
     try:
         with open(CACHE_FILE_PATH, 'r') as file:
             return json.load(file)
@@ -31,33 +32,45 @@ def load_cache():
         return []
 cached_applies = load_cache()
 
-def update_cache(new_ids):
+def update_cache(new_ids): # Обновление кеша, обнвляет кеш лол
     global cached_applies
     cached_applies.extend(new_ids)
-    cached_applies = list(set(cached_applies))
+    cached_applies = list(cached_applies)
     with open(CACHE_FILE_PATH, 'w') as file:
         json.dump(cached_applies, file)
+
       
-def cleanup_cache():
+def cleanup_cache(): # Очистка кеша, очишает последние 100 ID из списка если их накопилось больше 200.
     try:
         with open(CACHE_FILE_PATH, 'r') as file:
             cached_applies = json.load(file)
         
-        if len(cached_applies) > 200:
-            cached_applies = cached_applies[:100]
-        
+        if len(cached_applies) > 200: # Можно редактировать "200" здесь (при превышении какого значение чистить кеш)
+            cached_applies = cached_applies[:100] # Можно редактировать "100" здесь (сколько ID оставить)
+          
         with open(CACHE_FILE_PATH, 'w') as file:
             json.dump(cached_applies, file)
         print("Cache cleanup completed, if needed.")
     except Exception as e:
         print(f"Failed to cleanup cache: {str(e)}")
 
+def save_access_token(token): # Сохранение токена в файле .venv/access_token.txt, если у вас другое название файла нужно изменить TOKEN_FILE_PATH
+    with open(TOKEN_FILE_PATH, 'w') as file:
+        file.write(token)
+
+def load_access_token(): # Загрузка токена из файла .venv/access_token.txt, если у вас другое название файла нужно изменить TOKEN_FILE_PATH
+    try:
+        with open(TOKEN_FILE_PATH, 'r') as file:
+            return file.read().strip()
+    except FileNotFoundError:
+        return None
+
 @app.route('/')
 def index():
     return "Login to Habr Career <a href='/login'>Login</a>"
 
 
-@app.route('/login')
+@app.route('/login') 
 def login():
     params = {
         'client_id': CLIENT_ID,
@@ -68,13 +81,13 @@ def login():
     return redirect(auth_url)
 
 
-@app.route('/callback')
+@app.route('/callback') 
 def callback():
     error = request.args.get('error')
     if error:
         return f"Error: {error}"
 
-    code = request.args.get('code')
+    code = request.args.get('code') 
     if code:
         req_body = {
             'code': code,
@@ -87,26 +100,30 @@ def callback():
             response = requests.post(TOKEN_URL, data=req_body)
             response.raise_for_status()
             token_info = response.json()
-            session['access_token'] = token_info['access_token']
+            access_token = token_info['access_token']
+            save_access_token(access_token) #
             return redirect('/vacancies')
         except requests.RequestException as e:
             return f"Error: {str(e)}"
 
 
-@app.route('/vacancies')
+@app.route('/vacancies') # Функция, которую мы будем вызывать триггером спустя определенное кол-во времени
 def get_vacancies():
-    access_token = session.get('access_token')
+    access_token = load_access_token() # Загрузка токена, он перманентный, при перезапуске мы получим новый токен, все норм
     if not access_token:
-        return redirect('/login')
-    
-    print(access_token)
+        print("Access token is missing")
+        return
 
     headers = {'Authorization': f"Bearer {access_token}", 'User-Agent': 'Chrome/123.0.0.0'}
     
-    current_applies, new_applies = [], []
-    vacancies_ids = ['your vacancy id', 'your vacancy id', 'your vacancy id', 'your vacancy id'] #if you have only 1 vacancy, add vacancies_ids = ['your vacancy id'], if more, then add more.
+    current_applies, new_applies = [], [] 
+    cached_applies = load_cache() # Загрузка кеша
 
-    for vacancy_id in vacancies_ids:
+    vacancies_response = requests.get(API_BASE_URL + '/v1/integrations/vacancies/', headers=headers) 
+    vacancies = vacancies_response.json()
+    vacancies_ids = [val['id'] for val in vacancies['vacancies']]
+
+    for vacancy_id in vacancies_ids: # Цикл просмотра ваших вакансий для получения их ID
         try:
             response = requests.get(f'{API_BASE_URL}v1/integrations/vacancies/{vacancy_id}/responses?page=1?access_token=${access_token}', headers=headers)
             response.raise_for_status()
@@ -115,18 +132,22 @@ def get_vacancies():
         except requests.RequestException as e:
             print(f"Failed to fetch data for vacancy {vacancy_id}: {str(e)}")
 
-    new_applies = [apply for apply in current_applies if apply['id'] not in cached_applies]
+    new_applies = [apply for apply in current_applies if apply['id'] not in cached_applies] # Фильтрация новых откликов по ID
 
-    new_apply_ids = [apply['id'] for apply in new_applies]
-    update_cache(new_apply_ids)
-
+    new_apply_ids = [apply['id'] for apply in new_applies] # Отбор новых новых ID для дальнейшего кеширования
     for apply in new_applies:
         user_login = apply['user']['login']
         user_name = apply['user']['name']
         experience = apply['user']['experience_total']['months']
         link = ('https://career.habr.com/' + apply['user']['login'])
+        body = apply['body']
+             
+        experience = int(experience)
+        years = experience / 12
+        mounths = math.ceil(years * 2) / 2
+        mounths = int(mounths)
 
-        try:
+        try: # Запрос названия вакансии тк она не включена в отклик
             vacancy_response = requests.get(f'{API_BASE_URL}v1/integrations/vacancies/{apply["vacancy_id"]}?access_token=${access_token}', headers=headers)
             vacancy_response.raise_for_status()
             vacancy_data = vacancy_response.json()
@@ -135,10 +156,11 @@ def get_vacancies():
             print(f"Failed to fetch vacancy details for {apply['vacancy_id']}: {str(e)}")
             vacancy_title = "Unknown Title" 
 
-        try:
+        try: # Запрос со страницы пользователя и упаковка данных
             user_response = requests.get(f'{API_BASE_URL}v1/integrations/users/{user_login}?access_token=${access_token}', headers=headers)
             user_response.raise_for_status()
             user_info = user_response.json()
+            
 
             email = user_info['contacts']['emails'][0]['value'] if user_info['contacts']['emails'] else None
             telegram = None
@@ -148,30 +170,30 @@ def get_vacancies():
                     break
             habr_profile_link = user_info['url']
 
-            payload = {
-                "user_name": user_name,
-                "vacancy_title": vacancy_title,
-                "experience": experience,
-                "email": email,
-                "telegram": telegram,
-                "link" : link,
-                "habr_profile_link": habr_profile_link,
+            payload = { # Наш груз, то, что нужно будет принять, мы используем Mystache, то есть {{user_name}} будет отображать имя пользователя и тд.
+                "user_name": user_name,                     # Имя Фамилия пользователя
+                "vacancy_title": vacancy_title,             # Название вакансии, на которую пришел отклик
+                "experience": mounths,                      # Опыт работы (в годах с математическим округлением)
+                "email": email,                             # Почта пользователя
+                "telegram": telegram,                       # ТГ пользователя (при наличии)
+                "link" : link,                              # Ссылка на страницу на хабре
+                "habr_profile_link": habr_profile_link,     # Ссвлка на указанную пользователем страницу (типа резюме там оставляют или сайт свой)
+                "body" : body,                              # Сопроводительное письмо
             }
-            webhook_response = requests.post(WEBHOOK_URL, json=payload, headers={'Content-Type': 'application/json'})
+            webhook_response = requests.post(WEBHOOK_URL, json=payload, headers={'Content-Type': 'application/json'}) # Отправка вебхука
             webhook_response.raise_for_status()
             print(f"Webhook sent successfully for user {user_login}")
         except requests.RequestException as e:
             print(f"Failed to send webhook or fetch user data for {user_login}: {str(e)}")
+    update_cache(new_apply_ids) # Обновление кеша
+    return (new_applies)
 
-    global cached_applies
-    cached_applies.extend([apply['id'] for apply in new_applies])
-    cached_applies = list(set(cached_applies))
 
-    return jsonify(new_applies)
 
     
-scheduler.add_job(id='Scheduled Task', func=get_vacancies, trigger='interval', seconds=60)
+scheduler.add_job(id='Scheduled Task', func=get_vacancies, trigger='interval', seconds=1800) # Задачник: обращаться к функции раз в пол часа. то есть каждые пол часа приложение будет проверять новые отклики на ваши вакансии и в случае их нахождения отправлять вам вебхук
 
-scheduler.add_job(id='cache_cleanup_task', func=cleanup_cache, trigger='interval', hours=24, name='Conditional cache cleanup',replace_existing=True)
+scheduler.add_job(id='cache_cleanup_task', func=cleanup_cache, trigger='interval', hours=24, name='Conditional cache cleanup',replace_existing=True) # Задачник: обращаться к функции очистки кеша.
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
