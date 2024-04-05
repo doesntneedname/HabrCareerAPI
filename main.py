@@ -2,7 +2,6 @@ from flask import Flask, redirect, request, session, jsonify, json
 from flask_apscheduler import APScheduler
 import requests
 import urllib.parse
-from datetime import datetime
 import math
 
 app = Flask(__name__)
